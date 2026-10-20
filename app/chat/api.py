@@ -411,8 +411,9 @@ def usage_export():
     """Export the current user's usage ledger as bounded, paginated JSON.
 
     The authenticated user is always the outer scope: ``workspace_id``,
-    ``project_id`` and ``source`` only narrow that user's own records and can
-    never expose another account's usage. ``page`` and ``limit`` are clamped to
+    ``project_id``, ``source``, ``cost_center`` and ``project_tag`` only narrow
+    that user's own records and can never expose another account's usage.
+    ``page`` and ``limit`` are clamped to
     the same bounds as the marketplace listing (page >= 1, limit 1-500), and
     invalid values fall back to the defaults rather than returning an unbounded
     document.
@@ -436,6 +437,8 @@ def usage_export():
         workspace_id=request.args.get("workspace_id", type=int),
         project_id=request.args.get("project_id", type=int),
         source=request.args.get("source"),
+        cost_center=request.args.get("cost_center"),
+        project_tag=request.args.get("project_tag"),
         page=page,
         limit=limit,
     )
