@@ -16,7 +16,12 @@ from sqlalchemy import create_engine, inspect
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-PLUGIN_TABLES = {"plugins", "plugin_installations", "plugin_capability_grants"}
+PLUGIN_TABLES = {
+    "plugins",
+    "plugin_installations",
+    "plugin_capability_grants",
+    "plugin_lock_entries",
+}
 
 # Column set per plugin table as defined by the models.
 EXPECTED_COLUMNS = {
@@ -56,6 +61,17 @@ EXPECTED_COLUMNS = {
         "capability",
         "granted_at",
         "granted_by_id",
+    },
+    "plugin_lock_entries": {
+        "id",
+        "workspace_id",
+        "owner_id",
+        "plugin_id",
+        "version",
+        "source",
+        "integrity",
+        "dependencies",
+        "resolved_at",
     },
 }
 
@@ -127,7 +143,7 @@ class TestMigrationHead:
         result = _run_flask(["db", "heads"], {"DATABASE_URL": "sqlite:///:memory:"})
         assert result.returncode == 0, result.stderr
         output = result.stdout + result.stderr
-        assert "b7c8d9e0f1a2" in output
+        assert "a4b5c6d7e8f9" in output
         # The merge revision must be the single head (no dangling branches).
         head_lines = [line for line in output.splitlines() if "(head)" in line]
         assert len(head_lines) == 1
@@ -459,6 +475,30 @@ class TestMigrationHead:
             assert "plugin_error_reports" in tables
             columns = {col["name"] for col in insp.get_columns("plugin_error_reports")}
             assert columns == expected
+
+    def test_plugin_lock_entries_table_upgraded(self):
+        expected = EXPECTED_COLUMNS["plugin_lock_entries"]
+        with _migration_db() as db_url, _inspect(db_url) as insp:
+            assert "plugin_lock_entries" in set(insp.get_table_names())
+            columns = {col["name"] for col in insp.get_columns("plugin_lock_entries")}
+            assert columns == expected
+            indexes = {idx["name"] for idx in insp.get_indexes("plugin_lock_entries")}
+            assert {
+                "ix_plugin_lock_entries_workspace_id",
+                "ix_plugin_lock_entries_owner_id",
+                "ix_plugin_lock_entries_plugin_id",
+            } <= indexes
+
+    def test_plugin_lock_entries_downgrade_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_url = f"sqlite:///{os.path.join(tmp, 'mig_lock.db')}"
+            up = _run_flask(["db", "upgrade"], {"DATABASE_URL": db_url})
+            assert up.returncode == 0, up.stderr
+            down = _run_flask(["db", "downgrade", "b7c8d9e0f1a2"], {"DATABASE_URL": db_url})
+            assert down.returncode == 0, down.stderr
+            with _inspect(db_url) as insp:
+                tables = set(insp.get_table_names())
+                assert "plugin_lock_entries" not in tables
 
     def test_plugin_error_reports_downgrade_removed(self):
         with tempfile.TemporaryDirectory() as tmp:
