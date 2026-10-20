@@ -65,6 +65,10 @@ class UsageRecord(db.Model):
     #: When the cost estimate was last recomputed after a price change (#440).
     #: ``None`` means the row still carries its original estimate.
     cost_recomputed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    #: Optional owner-assigned chargeback labels (#484). Both are nullable so
+    #: untagged historical rows remain valid and aggregate under "untagged".
+    cost_center = db.Column(db.String(64), nullable=True, index=True)
+    project_tag = db.Column(db.String(64), nullable=True, index=True)
     #: Correlation id shared with the request log (``X-Request-ID``). Nullable
     #: because rows can be written by background/CLI work with no request.
     request_id = db.Column(db.String(64), nullable=True, index=True)
@@ -99,6 +103,8 @@ class UsageRecord(db.Model):
             "cost_recomputed_at": (
                 self.cost_recomputed_at.isoformat() if self.cost_recomputed_at else None
             ),
+            "cost_center": self.cost_center,
+            "project_tag": self.project_tag,
             "request_id": self.request_id,
             "latency_ms": self.latency_ms,
             "status": self.status,

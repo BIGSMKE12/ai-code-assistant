@@ -48,7 +48,7 @@
   </p>
 </section>
 
-{% macro breakdown_table(title, rows, label) %}
+{% macro breakdown_table(title, rows, label, key) %}
 <section aria-labelledby="{{ title|lower|replace(' ', '-') }}-heading">
   <h2 id="{{ title|lower|replace(' ', '-') }}-heading">{{ title }}</h2>
   {% if rows %}
@@ -66,7 +66,7 @@
     <tbody>
       {% for row in rows %}
       <tr>
-        <td>{{ row[label|lower] }}</td>
+        <td>{{ row[key] }}</td>
         <td>{{ row['count'] }}</td>
         <td>{{ row.prompt_tokens }}</td>
         <td>{{ row.completion_tokens }}</td>
@@ -82,9 +82,11 @@
 </section>
 {% endmacro %}
 
-{{ breakdown_table('By provider', dashboard.by_provider, 'Provider') }}
-{{ breakdown_table('By model', dashboard.by_model, 'Model') }}
-{{ breakdown_table('By source', dashboard.by_source, 'Source') }}
+{{ breakdown_table('By provider', dashboard.by_provider, 'Provider', 'provider') }}
+{{ breakdown_table('By model', dashboard.by_model, 'Model', 'model') }}
+{{ breakdown_table('By source', dashboard.by_source, 'Source', 'source') }}
+{{ breakdown_table('By cost center', dashboard.by_cost_center, 'Cost center', 'cost_center') }}
+{{ breakdown_table('By project tag', dashboard.by_project_tag, 'Project tag', 'project_tag') }}
 
 <section aria-labelledby="daily-heading">
   <h2 id="daily-heading">Daily time series</h2>

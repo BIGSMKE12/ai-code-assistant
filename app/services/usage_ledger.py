@@ -37,6 +37,12 @@ SOURCES = (
 )
 UNKNOWN_SOURCE = "unknown"
 
+#: Owner-assigned chargeback labels (#484). Rows without a tag are valid and
+#: group under :data:`UNTAGGED_LABEL` in dashboards.
+TAG_FIELDS = ("cost_center", "project_tag")
+TAG_MAX_LENGTH = 64
+UNTAGGED_LABEL = "untagged"
+
 #: Default/upper bounds for the historical chat-message backfill. The work is
 #: paginated by message id so a large conversation history is never loaded at
 #: once.
@@ -111,6 +117,26 @@ def source_bucket(source: Any) -> str:
     if value in SOURCES:
         return value
     return UNKNOWN_SOURCE
+
+
+def normalize_tag(value: Any) -> str | None:
+    """Normalize an owner-assigned cost-center/project tag, or return ``None``.
+
+    Tags are optional, case-insensitive labels used for chargeback rollups.
+    Whitespace is collapsed and the result is lowercased so ``" R&D "`` and
+    ``"r&d"`` group together. Empty values become ``None``; control characters
+    and values longer than :data:`TAG_MAX_LENGTH` are rejected.
+    """
+    if value is None:
+        return None
+    text = " ".join(str(value).split())
+    if not text:
+        return None
+    if len(text) > TAG_MAX_LENGTH:
+        raise ValueError(f"tag must be at most {TAG_MAX_LENGTH} characters.")
+    if any(ord(character) < 32 for character in text):
+        raise ValueError("tag must not contain control characters.")
+    return text.lower()
 
 
 def _non_negative_int(value, name: str) -> int:
@@ -238,6 +264,8 @@ def record_usage(
     model: str | None = None,
     tokens_estimated: bool = True,
     cost_estimate=None,
+    cost_center: str | None = None,
+    project_tag: str | None = None,
     request_id: str | None = None,
     latency_ms=None,
     status: str | None = None,
@@ -252,11 +280,15 @@ def record_usage(
     ``request_id``, ``latency_ms`` and ``status`` are optional correlation and
     performance fields. They default to ``None`` (the operation did not report
     them) and are validated so a malformed provider payload cannot write a
-    negative latency or an over-long id into the ledger.
+    negative latency or an over-long id into the ledger. ``cost_center`` and
+    ``project_tag`` are optional owner-assigned labels normalized with
+    :func:`normalize_tag` for chargeback rollups.
     """
     counts = normalize_usage(prompt_tokens, completion_tokens, total_tokens)
     provider = (str(provider).strip()[:50] or None) if provider else None
     model = (str(model).strip()[:100] or None) if model else None
+    cost_center = normalize_tag(cost_center)
+    project_tag = normalize_tag(project_tag)
     request_id = _optional_text(request_id, "request_id", 64)
     latency_ms = _optional_non_negative_int(latency_ms, "latency_ms")
     status = _optional_text(status, "status", 20)
@@ -304,6 +336,8 @@ def record_usage(
         total_tokens=counts["total_tokens"],
         tokens_estimated=bool(tokens_estimated),
         cost_estimate=cost_estimate,
+        cost_center=cost_center,
+        project_tag=project_tag,
         request_id=request_id,
         latency_ms=latency_ms,
         status=status,
@@ -416,6 +450,8 @@ def filtered_records_query(
     workspace_id=None,
     project_id=None,
     source=None,
+    cost_center=None,
+    project_tag=None,
 ):
     """Return the base query for rows matching optional owner/scope filters."""
     query = UsageRecord.query
@@ -429,6 +465,12 @@ def filtered_records_query(
         normalized = normalize_source(source)
         if normalized is not None:
             query = query.filter(UsageRecord.source == normalized)
+    normalized_center = normalize_tag(cost_center)
+    if normalized_center is not None:
+        query = query.filter(UsageRecord.cost_center == normalized_center)
+    normalized_project_tag = normalize_tag(project_tag)
+    if normalized_project_tag is not None:
+        query = query.filter(UsageRecord.project_tag == normalized_project_tag)
     return query
 
 
@@ -438,6 +480,8 @@ def query_records(
     workspace_id=None,
     project_id=None,
     source=None,
+    cost_center=None,
+    project_tag=None,
 ) -> list[UsageRecord]:
     """Fetch ledger rows with optional owner/scope filters."""
     query = filtered_records_query(
@@ -445,6 +489,8 @@ def query_records(
         workspace_id=workspace_id,
         project_id=project_id,
         source=source,
+        cost_center=cost_center,
+        project_tag=project_tag,
     )
     return query.order_by(UsageRecord.created_at, UsageRecord.id).all()
 
@@ -488,6 +534,8 @@ def export_payload(
     workspace_id=None,
     project_id=None,
     source=None,
+    cost_center=None,
+    project_tag=None,
     page=1,
     limit=EXPORT_DEFAULT_LIMIT,
     exported_at: datetime | None = None,
@@ -511,11 +559,15 @@ def export_payload(
     limit = min(limit, EXPORT_MAX_LIMIT)
 
     normalized_source = normalize_source(source)
+    normalized_center = normalize_tag(cost_center)
+    normalized_project_tag = normalize_tag(project_tag)
     query = filtered_records_query(
         user_id=user_id,
         workspace_id=workspace_id,
         project_id=project_id,
         source=normalized_source,
+        cost_center=normalized_center,
+        project_tag=normalized_project_tag,
     )
     totals = summarize_query(query)
     total = totals["count"]
@@ -533,6 +585,8 @@ def export_payload(
             "workspace_id": workspace_id,
             "project_id": project_id,
             "source": normalized_source,
+            "cost_center": normalized_center,
+            "project_tag": normalized_project_tag,
         },
         "pagination": {
             "page": page,
@@ -1076,9 +1130,12 @@ __all__ = [
     "STATUS_DENIED",
     "STATUS_ERROR",
     "STATUS_SUCCESS",
+    "TAG_FIELDS",
+    "TAG_MAX_LENGTH",
     "TOP_DEFAULT_LIMIT",
     "TOP_MAX_LIMIT",
     "UNKNOWN_SOURCE",
+    "UNTAGGED_LABEL",
     "backfill_from_messages",
     "breakdown_by_source",
     "breakdown_payload",
@@ -1087,6 +1144,7 @@ __all__ = [
     "export_payload",
     "filtered_records_query",
     "normalize_source",
+    "normalize_tag",
     "normalize_usage",
     "purge_records",
     "query_records",

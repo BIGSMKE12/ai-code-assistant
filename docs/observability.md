@@ -86,6 +86,12 @@ then total tokens, then label. Rows with no provider/model are grouped under
 an explicit `other` row and reported via `provider_truncated`/`model_truncated`
 and `*_groups_total`. Source rows keep their stable all-known-sources shape.
 
+Usage rows may carry optional `cost_center` and `project_tag` labels (#484).
+They are normalized to trimmed, lowercase values and are included in the JSON
+record export, as CSV columns, and as `by_cost_center` / `by_project_tag`
+dashboard rollups. Untagged rows group under `untagged`, and every rollup stays
+inside the same user or workspace scope as the rest of the dashboard.
+
 ## Cost recomputation
 
 Price-table changes do not rewrite history automatically. Run the bounded,
@@ -100,7 +106,6 @@ Only rows whose recomputed value differs are written, and each changed row gets
 `cost_recomputed_at`. A second run updates nothing. Rows whose provider/model
 has no known price become `NULL` (never zero). Use `--user-id`/`--workspace-id`
 to narrow the scope, `--limit` to cap scanned rows, and `--dry-run` to preview.
-
 ## Usage export
 
 `GET /api/usage/export` returns a paginated JSON document scoped to the current
