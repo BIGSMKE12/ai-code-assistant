@@ -10,7 +10,9 @@ This module provides:
 import importlib
 import json
 import logging
+import os
 import re
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -200,6 +202,34 @@ class PluginLoadError(PluginError):
     pass
 
 
+class PluginReloadError(PluginError):
+    """Plugin reload was refused or failed."""
+
+    pass
+
+
+def hot_reload_enabled(app=None) -> bool:
+    """Return ``True`` only for an explicitly enabled development app.
+
+    Hot reload executes newly written plugin code in-process, so it is gated
+    behind all of: the ``PLUGIN_HOT_RELOAD`` config flag, debug mode, and a
+    non-production environment. Production is refused even if the flag and
+    debug mode are both set by mistake.
+    """
+    from flask import current_app, has_app_context
+
+    if app is None:
+        if not has_app_context():
+            return False
+        app = current_app._get_current_object()
+    config = app.config
+    if os.getenv("APP_ENV") == "production" or config.get("ENVIRONMENT") == "production":
+        return False
+    if not config.get("PLUGIN_HOT_RELOAD", False):
+        return False
+    return bool(getattr(app, "debug", False))
+
+
 #: Optional lifecycle hook names a plugin class may implement.
 #:
 #: Hooks are invoked on registry ``enable``/``disable``/``uninstall`` **only for
@@ -286,6 +316,35 @@ class PluginEntryPointLoader:
                 f"for plugin {self.manifest.id}"
             )
         return module
+
+    def reload(self, existing: ModuleType | None = None) -> ModuleType:
+        """Import a fresh copy of the entry-point module.
+
+        The old module is kept in ``sys.modules`` if the new import fails, so a
+        broken edit cannot replace a working plugin. The decision to allow
+        reloading at all is made by :func:`hot_reload_enabled`.
+        """
+        if existing is None:
+            return self.load()
+
+        importlib.invalidate_caches()
+        # A same-second edit with an unchanged file size can leave a stale
+        # ``.pyc`` that the import system would happily reuse. Drop the cached
+        # bytecode so the edited source is what gets compiled.
+        try:
+            spec = importlib.util.find_spec(self.module_path)
+            if spec is not None and spec.cached:
+                Path(spec.cached).unlink(missing_ok=True)
+        except (ImportError, OSError, ValueError):
+            pass
+
+        previous = sys.modules.get(self.module_path) or existing
+        sys.modules.pop(self.module_path, None)
+        try:
+            return self.load()
+        except Exception:
+            sys.modules[self.module_path] = previous
+            raise
 
 
 @dataclass
@@ -492,6 +551,32 @@ class Plugin:
         self.loaded_at = datetime.now(UTC)
         logger.info(f"Loaded plugin: {self.manifest.id}")
 
+    def reload(self, app=None, *, registry=None) -> None:
+        """Reload the plugin module after a code edit.
+
+        Refused unless :func:`hot_reload_enabled` allows it. A failed reload
+        keeps the previously loaded module attached to the plugin.
+        """
+        if not hot_reload_enabled(app):
+            raise PluginReloadError(
+                "Plugin hot reload is disabled outside an enabled development environment"
+            )
+
+        if self.module is None:
+            self.load(registry=registry)
+            return
+
+        loader = PluginEntryPointLoader(self.manifest, registry=registry)
+        try:
+            module = loader.reload(self.module)
+        except Exception as exc:
+            self._record_error("reload", exc)
+            raise
+
+        self.module = module
+        self.loaded_at = datetime.now(UTC)
+        logger.info(f"Reloaded plugin: {self.manifest.id}")
+
     def _record_error(self, operation: str, exc: BaseException) -> None:
         """Best-effort bounded error report for a plugin boundary (#410).
 
@@ -628,6 +713,20 @@ class PluginRegistry:
         if plugin is None:
             raise PluginLoadError(f"Plugin {plugin_id} is not registered")
         plugin.load(registry=self)
+        return plugin
+
+    def reload_plugin(self, plugin_id: str, *, app=None) -> Plugin:
+        """Reload a registered plugin in development, or refuse.
+
+        Raises:
+            PluginLoadError: If the plugin is not registered.
+            PluginReloadError: If hot reload is disabled for this app or the
+                new module cannot be imported.
+        """
+        plugin = self._plugins.get(plugin_id)
+        if plugin is None:
+            raise PluginLoadError(f"Plugin {plugin_id} is not registered")
+        plugin.reload(app=app, registry=self)
         return plugin
 
     def discover(self, plugin_dir: str | Path) -> list[PluginManifest]:
