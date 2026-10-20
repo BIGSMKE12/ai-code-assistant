@@ -40,6 +40,8 @@ CSV_COLUMNS = (
     "total_tokens",
     "tokens_estimated",
     "cost_estimate",
+    "cost_center",
+    "project_tag",
     "currency",
 )
 
@@ -90,11 +92,17 @@ def _label(value, fallback: str = "unknown") -> str:
     return text or fallback
 
 
-def _group(records: list[UsageRecord], attribute: str, label: str) -> list[dict]:
+def _group(
+    records: list[UsageRecord],
+    attribute: str,
+    label: str,
+    *,
+    fallback: str = "unknown",
+) -> list[dict]:
     """Group rows by ``attribute`` and summarize each group deterministically."""
     buckets: dict[str, list[UsageRecord]] = {}
     for record in records:
-        key = _label(getattr(record, attribute, None))
+        key = _label(getattr(record, attribute, None), fallback)
         buckets.setdefault(key, []).append(record)
     rows = []
     for key in sorted(buckets):
@@ -125,6 +133,12 @@ def _payload(records: list[UsageRecord]) -> dict:
         "by_source": [{"source": source, **stats} for source, stats in by_source.items()],
         "by_provider": _group(records, "provider", "provider"),
         "by_model": _group(records, "model", "model"),
+        "by_cost_center": _group(
+            records, "cost_center", "cost_center", fallback=usage_ledger.UNTAGGED_LABEL
+        ),
+        "by_project_tag": _group(
+            records, "project_tag", "project_tag", fallback=usage_ledger.UNTAGGED_LABEL
+        ),
         "daily": _daily(records),
     }
 
@@ -203,6 +217,8 @@ def export_csv(
                 "total_tokens": int(record.total_tokens or 0),
                 "tokens_estimated": bool(record.tokens_estimated),
                 "cost_estimate": "" if record.cost_estimate is None else record.cost_estimate,
+                "cost_center": _label(record.cost_center, ""),
+                "project_tag": _label(record.project_tag, ""),
                 "currency": currency,
             }
         )
