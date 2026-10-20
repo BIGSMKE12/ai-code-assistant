@@ -209,6 +209,31 @@ Python cannot interrupt a thread, so an over-budget callback is **abandoned**
 rather than killed. It may still finish in the background, which is why plugin
 code must be idempotent and must not depend on being stopped.
 
+### Development-only hot reload (#411)
+
+During development, a loaded plugin module can be re-imported after an edit
+without restarting the server:
+
+```python
+registry.reload_plugin("my-plugin", app=app)
+# or, on a plugin instance:
+plugin.reload(app=app, registry=registry)
+```
+
+Reloading is refused with `PluginReloadError` unless **all** of these hold:
+
+- `PLUGIN_HOT_RELOAD` is enabled (the development config enables it);
+- the Flask app is in debug mode; and
+- the environment is not production (`ENVIRONMENT`, or the `APP_ENV`
+  environment variable, must not be `production`).
+
+The production config hard-disables both hot reload and debug mode, so a
+production deployment cannot re-import plugin code even if the flag is set by
+mistake. A failed reload is isolated: the previously loaded module stays
+attached to the plugin, and the failure is recorded as a bounded `reload` error
+report. Only modules already loaded through the validated entry-point loader
+can be reloaded, and the management API does not expose a reload endpoint.
+
 ## Plugin management (API + UI)
 
 ### Operator CLI

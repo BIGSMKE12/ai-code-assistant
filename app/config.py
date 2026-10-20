@@ -192,6 +192,13 @@ class Config:
     # Set to 0 (or negative) to disable the bound for local debugging.
     PLUGIN_EXECUTION_TIMEOUT = float(os.getenv("PLUGIN_EXECUTION_TIMEOUT", "5"))
 
+    # Plugin hot reload (#411). Reloading re-imports a plugin module in-process.
+    # It is refused unless the app is running in debug/development mode; the
+    # production config forces both this flag and DEBUG off, and the runtime
+    # guard also checks ENVIRONMENT, so production can never reload plugin code.
+    PLUGIN_HOT_RELOAD = False
+    ENVIRONMENT = "development"
+
     # Plugin resource limits (#409). These bound the data a plugin can persist
     # and the number of error reports an owner can read. Each setting is
     # documented in docs/plugins.md and .env.example; invalid values fall back
@@ -380,6 +387,10 @@ class DevelopmentConfig(Config):
 
     DEBUG = True
     SESSION_COOKIE_SECURE = False
+    # Reload plugin modules after edits without restarting the dev server.
+    # The runtime guard still requires DEBUG, and production overrides this.
+    PLUGIN_HOT_RELOAD = True
+    ENVIRONMENT = "development"
 
 
 class TestingConfig(Config):
@@ -390,6 +401,7 @@ class TestingConfig(Config):
     """
 
     TESTING = True
+    ENVIRONMENT = "testing"
     WTF_CSRF_ENABLED = False
     SQLALCHEMY_DATABASE_URI = os.getenv("TEST_DATABASE_URL", "sqlite:///:memory:")
     # Run import jobs inline so tests can assert final status deterministically.
@@ -418,6 +430,10 @@ class ProductionConfig(Config):
     """
 
     DEBUG = False
+    ENVIRONMENT = "production"
+    # Hot reload is a development-only affordance and is never enabled in
+    # production, even if the environment is misconfigured.
+    PLUGIN_HOT_RELOAD = False
 
     def __init__(self) -> None:
         if not os.getenv("SECRET_KEY"):
