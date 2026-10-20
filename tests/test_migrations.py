@@ -143,7 +143,7 @@ class TestMigrationHead:
         result = _run_flask(["db", "heads"], {"DATABASE_URL": "sqlite:///:memory:"})
         assert result.returncode == 0, result.stderr
         output = result.stdout + result.stderr
-        assert "a4b5c6d7e8f9" in output
+        assert "c5d6e7f8a9b0" in output
         # The merge revision must be the single head (no dangling branches).
         head_lines = [line for line in output.splitlines() if "(head)" in line]
         assert len(head_lines) == 1
@@ -220,6 +220,9 @@ class TestMigrationHead:
             "total_tokens",
             "tokens_estimated",
             "cost_estimate",
+            "cost_recomputed_at",
+            "cost_center",
+            "project_tag",
             "request_id",
             "latency_ms",
             "status",
@@ -239,7 +242,21 @@ class TestMigrationHead:
                 "ix_usage_records_created_at",
                 "ix_usage_records_request_id",
                 "ix_usage_records_status",
+                "ix_usage_records_cost_center",
+                "ix_usage_records_project_tag",
             } <= indexes
+
+    def test_usage_tag_columns_downgrade_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_url = f"sqlite:///{os.path.join(tmp, 'mig_usage_tags.db')}"
+            up = _run_flask(["db", "upgrade"], {"DATABASE_URL": db_url})
+            assert up.returncode == 0, up.stderr
+            down = _run_flask(["db", "downgrade", "b7c8d9e0f1a2"], {"DATABASE_URL": db_url})
+            assert down.returncode == 0, down.stderr
+            with _inspect(db_url) as insp:
+                columns = {col["name"] for col in insp.get_columns("usage_records")}
+                assert {"cost_center", "project_tag"}.isdisjoint(columns)
+                assert "usage_records" in set(insp.get_table_names())
 
     def test_usage_correlation_columns_downgrade_removed(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -61,6 +61,8 @@ class TestUsageExportApi:
             "workspace_id": None,
             "project_id": None,
             "source": None,
+            "cost_center": None,
+            "project_tag": None,
         }
         assert payload["pagination"] == {
             "page": 2,
